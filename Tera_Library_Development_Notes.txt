@@ -1,0 +1,443 @@
+— Database creation with the main tables.
+
+CREATE DATABASE tera_library;
+
+USE tera_library;
+
+CREATE TABLE authors (
+	author_id INT PRIMARY KEY AUTO_INCREMENT,
+	author_name VARCHAR(255) NOT NULL,
+    UNIQUE KEY idx_author_name (author_name)
+);
+
+CREATE TABLE genres (
+	genre_id INT PRIMARY KEY AUTO_INCREMENT,
+    genre_name VARCHAR(100) NOT NULL,
+    UNIQUE KEY idx_genre_name (genre_name)
+);
+
+CREATE TABLE publishers (
+	publisher_id INT PRIMARY KEY AUTO_INCREMENT,
+    publisher_name VARCHAR(255) NOT NULL,
+    UNIQUE KEY idx_publisher_name (publisher_name)
+);
+
+CREATE TABLE books (
+	isbn VARCHAR(13) PRIMARY KEY,
+    title VARCHAR(500) NOT NULL,
+    author_id INT NOT NULL,
+    book_type ENUM('hardback' , 'paperback') NOT NULL,
+    genre_id INT NOT NULL,
+    publisher_id INT NOT NULL,
+    publication_year YEAR,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (author_id) REFERENCES authors(author_id),
+    FOREIGN KEY (genre_id) REFERENCES genres(genre_id),
+    FOREIGN KEY (publisher_id) REFERENCES publishers(publisher_id),
+    INDEX idx_title (title),
+    INDEX idx_author (author_id)
+);
+
+USE tera_library;
+
+
+— forgot to create a table for book series and that I wanted to ensure that a book could be in multiple genres.  Below are my adjustments.
+
+CREATE TABLE series (
+    series_id INT PRIMARY KEY AUTO_INCREMENT,
+    series_name VARCHAR(255) NOT NULL,
+    UNIQUE KEY idx_series_name (series_name)
+);
+
+ALTER TABLE books 
+ADD COLUMN series_id INT NULL AFTER publication_year,
+ADD COLUMN series_number INT NULL AFTER series_id,
+ADD FOREIGN KEY (series_id) REFERENCES series(series_id);
+
+
+CREATE TABLE book_genres (
+    book_isbn VARCHAR(13) NOT NULL,
+    genre_id INT NOT NULL,
+    PRIMARY KEY (book_isbn, genre_id),
+    FOREIGN KEY (book_isbn) REFERENCES books(isbn) ON DELETE CASCADE,
+    FOREIGN KEY (genre_id) REFERENCES genres(genre_id) ON DELETE CASCADE
+);
+
+INSERT INTO book_genres (book_isbn, genre_id)
+SELECT isbn, genre_id 
+FROM books 
+WHERE genre_id IS NOT NULL;
+
+
+SELECT CONSTRAINT_NAME 
+FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE 
+WHERE TABLE_SCHEMA = 'tera_library' 
+  AND TABLE_NAME = 'books' 
+  AND COLUMN_NAME = 'genre_id'
+  AND REFERENCED_TABLE_NAME = 'genres';
+  
+ALTER TABLE books DROP FOREIGN KEY books_ibfk_2;
+
+ALTER TABLE books DROP COLUMN genre_id;
+
+—  Add book into the database
+
+-- NOTE: written before book_authors was created. See updated template below.
+-- Step 1: Add the author, publisher, and series. Used Remake as the example here.
+
+INSERT IGNORE INTO authors (author_name) VALUES ('Ilima Todd');
+INSERT IGNORE INTO publishers (publisher_name) VALUES ('Shadow Mountain');
+INSERT IGNORE INTO series (series_name) VALUES ('Remake');
+
+-- Step 2: Add all three genres
+INSERT IGNORE INTO genres (genre_name) VALUES ('Science Fiction');
+INSERT IGNORE INTO genres (genre_name) VALUES ('Young Adult');
+INSERT IGNORE INTO genres (genre_name) VALUES ('Dystopian');
+
+-- Step 3: Add the book (without genre_id)
+INSERT INTO books (isbn, title, author_id, book_type, publisher_id, publication_year, series_id, series_number)
+VALUES (
+    '9781609079246',
+    'Remake',
+    (SELECT author_id FROM authors WHERE author_name = 'Ilima Todd'),
+    'hardback',
+    (SELECT publisher_id FROM publishers WHERE publisher_name = 'Shadow Mountain'),
+    2014,
+    (SELECT series_id FROM series WHERE series_name = 'Remake'),
+    1
+);
+
+-- Step 4: Link the book to all three genres
+INSERT INTO book_genres (book_isbn, genre_id)
+VALUES 
+    ('9781609079246', (SELECT genre_id FROM genres WHERE genre_name = 'Science Fiction')),
+    ('9781609079246', (SELECT genre_id FROM genres WHERE genre_name = 'Young Adult')),
+    ('9781609079246', (SELECT genre_id FROM genres WHERE genre_name = 'Dystopian'));
+    
+  
+-- NOTE: written before book_authors was created. See updated template below.
+— If book is not part of a series.  I used Behold the Dawn for this example.
+
+-- Step 1: Add the author, publisher, and series
+INSERT IGNORE INTO authors (author_name) VALUES ('K.M. Weiland');
+INSERT IGNORE INTO publishers (publisher_name) VALUES ('PenForASword');
+INSERT IGNORE INTO series (series_name) VALUES (Null);
+
+-- Step 2: Add all genres
+INSERT IGNORE INTO genres (genre_name) VALUES ('Historical Fiction');
+INSERT IGNORE INTO genres (genre_name) VALUES ('Religious Fiction');
+
+-- Step 3: Add the book (without genre_id)
+INSERT INTO books (isbn, title, author_id, book_type, publisher_id, publication_year, series_id, series_number)
+VALUES (
+    '9780978924614',
+    'Behold the Dawn',
+    (SELECT author_id FROM authors WHERE author_name = 'K.M. Weiland'),
+    'paperback',
+    (SELECT publisher_id FROM publishers WHERE publisher_name = 'PenForASword'),
+    2009,
+    (SELECT series_id FROM series WHERE series_name = Null),
+    Null
+);
+
+-- Step 4: Link the book to all three genres
+INSERT INTO book_genres (book_isbn, genre_id)
+VALUES 
+    ('9780978924614', (SELECT genre_id FROM genres WHERE genre_name = 'Historical Fiction')),
+    ('9780978924614', (SELECT genre_id FROM genres WHERE genre_name = 'Religious Fiction’));
+
+
+
+
+
+
+— realized some books have multiple authors.  
+— created a junction table
+
+CREATE TABLE book_authors (
+    book_isbn VARCHAR(13),
+    author_id INT,
+    author_order INT,  -- Optional: to preserve order of authors (1st author, 2nd author, etc.)
+    PRIMARY KEY (book_isbn, author_id),
+    FOREIGN KEY (book_isbn) REFERENCES books(isbn) ON DELETE CASCADE,
+    FOREIGN KEY (author_id) REFERENCES authors(author_id) ON DELETE CASCADE
+);
+
+— migrate existing data
+
+INSERT INTO book_authors (book_isbn, author_id, author_order)
+SELECT isbn, author_id, 1
+FROM books
+WHERE author_id IS NOT NULL;
+
+— remove the old author_id column from books
+
+ALTER TABLE books DROP FOREIGN KEY books_ibfk_1;  -- Adjust constraint name if different
+ALTER TABLE books DROP COLUMN author_id;
+
+— Updated query with multiple authors
+
+SELECT 
+    ROW_NUMBER() OVER (ORDER BY COALESCE(s.series_name, '~'), b.series_number, b.title) AS book_number,
+    b.isbn,
+    b.title,
+    GROUP_CONCAT(DISTINCT a.author_name ORDER BY ba.author_order SEPARATOR ', ') AS authors,
+    b.book_type,
+    GROUP_CONCAT(DISTINCT g.genre_name ORDER BY g.genre_name SEPARATOR ', ') AS genres,
+    p.publisher_name,
+    b.publication_year,
+    s.series_name,
+    b.series_number
+FROM books b
+LEFT JOIN book_authors ba ON b.isbn = ba.book_isbn
+LEFT JOIN authors a ON ba.author_id = a.author_id
+JOIN publishers p ON b.publisher_id = p.publisher_id
+LEFT JOIN series s ON b.series_id = s.series_id
+LEFT JOIN book_genres bg ON b.isbn = bg.book_isbn
+LEFT JOIN genres g ON bg.genre_id = g.genre_id
+GROUP BY b.isbn, b.title, b.book_type, p.publisher_name, 
+         b.publication_year, s.series_name, b.series_number
+ORDER BY COALESCE(s.series_name, '~'), b.series_number, b.title;
+
+— updated code to allow multiple authors. Used a book with one author for the example.  This is the code to use from now on.
+
+-- Step 1: Add ALL authors for this book
+INSERT IGNORE INTO authors (author_name) VALUES ('Jason Mow');
+INSERT IGNORE INTO authors (author_name) VALUES ('Second Author Name');  -- Add if there's a co-author
+INSERT IGNORE INTO authors (author_name) VALUES ('Third Author Name');   -- Add if needed
+
+-- Step 2: Add publisher and series
+INSERT IGNORE INTO publishers (publisher_name) VALUES ('Ethos Productions');
+INSERT IGNORE INTO series (series_name) VALUES ('The War Chapters Series');
+
+-- Step 3: Add all genres
+INSERT IGNORE INTO genres (genre_name) VALUES ('Historical Fiction');
+INSERT IGNORE INTO genres (genre_name) VALUES ('Religious Fiction');
+
+-- Step 4: Add the book (WITHOUT author_id)
+INSERT INTO books (isbn, title, book_type, publisher_id, publication_year, series_id, series_number)
+VALUES (
+    '9780990595304',
+    'Moroni & the Battle for Manti',
+    'paperback',
+    (SELECT publisher_id FROM publishers WHERE publisher_name = 'Ethos Productions'),
+    2016,
+    (SELECT series_id FROM series WHERE series_name = 'The War Chapters Series'),
+    1
+);
+
+-- Step 5: Link the book to ALL its authors (add as many as needed)
+INSERT INTO book_authors (book_isbn, author_id, author_order)
+VALUES 
+    ('9780990595304', (SELECT author_id FROM authors WHERE author_name = 'Jason Mow'), 1);
+    -- Add more authors if needed:
+    -- ('9780990595304', (SELECT author_id FROM authors WHERE author_name = 'Second Author Name'), 2),
+    -- ('9780990595304', (SELECT author_id FROM authors WHERE author_name = 'Third Author Name'), 3);
+
+-- Step 6: Link the book to all genres
+INSERT INTO book_genres (book_isbn, genre_id)
+VALUES 
+    ('9780990595304', (SELECT genre_id FROM genres WHERE genre_name = 'Historical Fiction')),
+    ('9780990595304', (SELECT genre_id FROM genres WHERE genre_name = 'Religious Fiction’));
+
+— realized I made a mistake and didn’t change the author on a book.  The joys of copying and pasting code.
+
+-- First, find the book to confirm we have the right one
+SELECT b.isbn, b.title, GROUP_CONCAT(a.author_name) AS current_authors
+FROM books b
+LEFT JOIN book_authors ba ON b.isbn = ba.book_isbn
+LEFT JOIN authors a ON ba.author_id = a.author_id
+WHERE b.title = 'The Wise Man Returns'
+GROUP BY b.isbn, b.title;
+
+-- Step 1: Remove the current author association(s)
+DELETE FROM book_authors 
+WHERE book_isbn = (SELECT isbn FROM books WHERE title = 'The Wise Man Returns');
+
+-- Step 2: Add the new author if they don't exist
+INSERT IGNORE INTO authors (author_name) VALUES ('Kenny Kemp');
+
+-- Step 3: Link the book to the new author
+INSERT INTO book_authors (book_isbn, author_id, author_order)
+VALUES (
+    (SELECT isbn FROM books WHERE title = 'The Wise Man Returns'),
+    (SELECT author_id FROM authors WHERE author_name = 'Kenny Kemp'),
+    1
+);
+
+—  I misspelled the series name in the second spot where I was supposed to put the series name.  As a result it was set to null.  Here is how I fixed it
+
+-- Step 1: Make sure the CORRECTLY spelled series exists
+INSERT IGNORE INTO series (series_name) VALUES ('Millennial Glory');
+
+-- Step 2: Link the book to the correct series
+UPDATE books
+SET series_id = (SELECT series_id FROM series WHERE series_name = 'Millennial Glory'),
+    series_number = 1
+WHERE title = 'Hidden Light';
+-- Or use: WHERE isbn = ‘9780123456789’;
+
+— Added a table to allow me to show the date I started reading/ finished a book, how I would rate the book, and add any personal notes about the book.
+
+CREATE TABLE reading_log (
+    log_id INT PRIMARY KEY AUTO_INCREMENT,
+    book_isbn VARCHAR(13) NOT NULL,
+    date_started DATE,
+    date_finished DATE,
+    rating TINYINT CHECK (rating BETWEEN 1 AND 5),
+    notes VARCHAR(1000),
+    FOREIGN KEY (book_isbn) REFERENCES books(isbn) ON DELETE CASCADE
+);
+
+
+— see what books are in the database ordered by book title
+
+SELECT 
+    b.isbn,
+    b.title,
+    GROUP_CONCAT(DISTINCT a.author_name ORDER BY ba.author_order SEPARATOR ', ') AS authors,
+    b.book_type,
+    GROUP_CONCAT(DISTINCT g.genre_name ORDER BY g.genre_name SEPARATOR ', ') AS genres,
+    p.publisher_name,
+    b.publication_year,
+    s.series_name,
+    b.series_number
+FROM books b
+LEFT JOIN book_authors ba ON b.isbn = ba.book_isbn
+LEFT JOIN authors a ON ba.author_id = a.author_id
+JOIN publishers p ON b.publisher_id = p.publisher_id
+LEFT JOIN series s ON b.series_id = s.series_id
+LEFT JOIN book_genres bg ON b.isbn = bg.book_isbn
+LEFT JOIN genres g ON bg.genre_id = g.genre_id
+GROUP BY b.isbn, b.title, b.book_type, p.publisher_name, 
+         b.publication_year, s.series_name, b.series_number
+ORDER BY b.title;
+
+— count the number of books 
+
+SELECT COUNT(DISTINCT b.isbn) AS total_books
+FROM books b
+LEFT JOIN book_authors ba ON b.isbn = ba.book_isbn
+LEFT JOIN authors a ON ba.author_id = a.author_id
+JOIN publishers p ON b.publisher_id = p.publisher_id
+LEFT JOIN series s ON b.series_id = s.series_id
+LEFT JOIN book_genres bg ON b.isbn = bg.book_isbn
+LEFT JOIN genres g ON bg.genre_id = g.genre_id;
+
+— count by author
+
+
+SELECT a.author_name, COUNT(DISTINCT b.isbn) AS book_count
+FROM books b
+JOIN book_authors ba ON b.isbn = ba.book_isbn
+JOIN authors a ON ba.author_id = a.author_id
+GROUP BY a.author_name
+ORDER BY book_count DESC;
+
+— will count book by type
+
+SELECT 
+    b.book_type,
+    COUNT(DISTINCT b.isbn) AS book_count
+FROM books b
+GROUP BY b.book_type
+ORDER BY book_count DESC;
+
+
+
+— count by genre
+
+SELECT 
+    g.genre_name,
+    COUNT(DISTINCT b.isbn) AS book_count
+FROM books b
+LEFT JOIN book_genres bg ON b.isbn = bg.book_isbn
+LEFT JOIN genres g ON bg.genre_id = g.genre_id
+WHERE g.genre_name IS NOT NULL
+GROUP BY g.genre_name
+ORDER BY book_count DESC;
+— each book has a number.  It is ordered by the series and then the number in that series
+
+
+
+— Example of how to add to the reading log.  
+INSERT INTO reading_log (book_isbn, date_started, date_finished, rating, notes)
+VALUES (
+    '9781609079246',
+    '2024-01-01',
+    '2024-01-15',
+    5,
+    'Second read - still amazing'
+);
+
+-- Books you have read more than once
+SELECT 
+    b.title,
+    GROUP_CONCAT(DISTINCT a.author_name ORDER BY ba.author_order SEPARATOR ', ') AS authors,
+    COUNT(rl.log_id) AS times_read,
+    MAX(rl.date_finished) AS last_finished
+FROM reading_log rl
+JOIN books b ON rl.book_isbn = b.isbn
+LEFT JOIN book_authors ba ON b.isbn = ba.book_isbn
+LEFT JOIN authors a ON ba.author_id = a.author_id
+GROUP BY b.isbn, b.title
+HAVING COUNT(rl.log_id) > 1
+ORDER BY times_read DESC;
+
+-- Total times each book has been read
+SELECT 
+    b.title,
+    GROUP_CONCAT(DISTINCT a.author_name ORDER BY ba.author_order SEPARATOR ', ') AS authors,
+    COUNT(rl.log_id) AS times_read
+FROM books b
+LEFT JOIN reading_log rl ON b.isbn = rl.book_isbn
+LEFT JOIN book_authors ba ON b.isbn = ba.book_isbn
+LEFT JOIN authors a ON ba.author_id = a.author_id
+GROUP BY b.isbn, b.title
+ORDER BY times_read DESC;
+
+-- Books I have not read yet
+SELECT 
+    b.title,
+    GROUP_CONCAT(DISTINCT a.author_name ORDER BY ba.author_order SEPARATOR ', ') AS authors,
+    b.book_type,
+    GROUP_CONCAT(DISTINCT g.genre_name ORDER BY g.genre_name SEPARATOR ', ') AS genres,
+    s.series_name,
+    b.series_number
+FROM books b
+LEFT JOIN book_authors ba ON b.isbn = ba.book_isbn
+LEFT JOIN authors a ON ba.author_id = a.author_id
+LEFT JOIN book_genres bg ON b.isbn = bg.book_isbn
+LEFT JOIN genres g ON bg.genre_id = g.genre_id
+LEFT JOIN series s ON b.series_id = s.series_id
+LEFT JOIN reading_log rl ON b.isbn = rl.book_isbn
+WHERE rl.log_id IS NULL
+GROUP BY b.isbn, b.title, b.book_type, s.series_name, b.series_number
+ORDER BY s.series_name, b.series_number, b.title;
+
+— Shows all books with the reading info added
+
+SELECT 
+    b.isbn,
+    b.title,
+    GROUP_CONCAT(DISTINCT a.author_name ORDER BY ba.author_order SEPARATOR ', ') AS authors,
+    b.book_type,
+    GROUP_CONCAT(DISTINCT g.genre_name ORDER BY g.genre_name SEPARATOR ', ') AS genres,
+    p.publisher_name,
+    b.publication_year,
+    s.series_name,
+    b.series_number,
+    COUNT(rl.log_id) AS times_read,
+    MAX(rl.date_finished) AS last_finished,
+    MAX(rl.rating) AS rating
+FROM books b
+LEFT JOIN book_authors ba ON b.isbn = ba.book_isbn
+LEFT JOIN authors a ON ba.author_id = a.author_id
+JOIN publishers p ON b.publisher_id = p.publisher_id
+LEFT JOIN series s ON b.series_id = s.series_id
+LEFT JOIN book_genres bg ON b.isbn = bg.book_isbn
+LEFT JOIN genres g ON bg.genre_id = g.genre_id
+LEFT JOIN reading_log rl ON b.isbn = rl.book_isbn
+GROUP BY b.isbn, b.title, b.book_type, p.publisher_name, 
+         b.publication_year, s.series_name, b.series_number
+ORDER BY b.title;

@@ -1,3 +1,8 @@
+— These are my working notes as the schema evolved over time. Kept as-is (typos
+— and all) to document the actual design process rather than as a polished
+— guide to copy verbatim — see tera_library_schema.sql for the current schema
+— and the README for cleaned-up sample queries and templates.
+
 — Database creation with the main tables.
 
 CREATE DATABASE tera_library;
@@ -118,16 +123,16 @@ VALUES
 -- NOTE: written before book_authors was created. See updated template below.
 — If book is not part of a series.  I used Behold the Dawn for this example.
 
--- Step 1: Add the author, publisher, and series
+-- Step 1: Add the author and publisher (no series row needed for a standalone book)
 INSERT IGNORE INTO authors (author_name) VALUES ('K.M. Weiland');
 INSERT IGNORE INTO publishers (publisher_name) VALUES ('PenForASword');
-INSERT IGNORE INTO series (series_name) VALUES (Null);
 
 -- Step 2: Add all genres
 INSERT IGNORE INTO genres (genre_name) VALUES ('Historical Fiction');
 INSERT IGNORE INTO genres (genre_name) VALUES ('Religious Fiction');
 
--- Step 3: Add the book (without genre_id)
+-- Step 3: Add the book (without genre_id). series_id and series_number are
+-- just left NULL directly for a standalone book — no series lookup needed.
 INSERT INTO books (isbn, title, author_id, book_type, publisher_id, publication_year, series_id, series_number)
 VALUES (
     '9780978924614',
@@ -136,15 +141,22 @@ VALUES (
     'paperback',
     (SELECT publisher_id FROM publishers WHERE publisher_name = 'PenForASword'),
     2009,
-    (SELECT series_id FROM series WHERE series_name = Null),
-    Null
+    NULL,
+    NULL
 );
 
--- Step 4: Link the book to all three genres
+-- Step 4: Link the book to all genres
 INSERT INTO book_genres (book_isbn, genre_id)
 VALUES 
     ('9780978924614', (SELECT genre_id FROM genres WHERE genre_name = 'Historical Fiction')),
-    ('9780978924614', (SELECT genre_id FROM genres WHERE genre_name = 'Religious Fiction’));
+    ('9780978924614', (SELECT genre_id FROM genres WHERE genre_name = 'Religious Fiction'));
+
+-- NOTE: My first attempt at this tried INSERT IGNORE INTO series (series_name)
+-- VALUES (Null) and later SELECT series_id FROM series WHERE series_name = Null
+-- to link it — series_name is NOT NULL so the insert would fail outright, and
+-- "= NULL" is never true in SQL anyway (needs IS NULL). The fix was simpler:
+-- standalone books just don't need a series row at all — series_id and
+-- series_number are set directly to NULL on the book itself.
 
 
 
@@ -199,46 +211,51 @@ GROUP BY b.isbn, b.title, b.book_type, p.publisher_name,
          b.publication_year, s.series_name, b.series_number
 ORDER BY COALESCE(s.series_name, '~'), b.series_number, b.title;
 
-— updated code to allow multiple authors. Used a book with one author for the example.  This is the code to use from now on.
+— updated code to allow multiple authors. Used a book with two authors for the example.  This is the code to use from now on.
 
 -- Step 1: Add ALL authors for this book
-INSERT IGNORE INTO authors (author_name) VALUES ('Jason Mow');
-INSERT IGNORE INTO authors (author_name) VALUES ('Second Author Name');  -- Add if there's a co-author
-INSERT IGNORE INTO authors (author_name) VALUES ('Third Author Name');   -- Add if needed
+INSERT IGNORE INTO authors (author_name) VALUES ('Jennifer K. Clark');
+INSERT IGNORE INTO authors (author_name) VALUES ('Stephonie K. Williams');  -- Add if there's a co-author
+-- INSERT IGNORE INTO authors (author_name) VALUES ('Third Author Name');   -- Add if needed
 
 -- Step 2: Add publisher and series
-INSERT IGNORE INTO publishers (publisher_name) VALUES ('Ethos Productions');
-INSERT IGNORE INTO series (series_name) VALUES ('The War Chapters Series');
+INSERT IGNORE INTO publishers (publisher_name) VALUES ('Covenant Communications');
+-- INSERT IGNORE INTO series (series_name) VALUES ('Series name'); -- Add if needed
 
 -- Step 3: Add all genres
 INSERT IGNORE INTO genres (genre_name) VALUES ('Historical Fiction');
 INSERT IGNORE INTO genres (genre_name) VALUES ('Religious Fiction');
+INSERT IGNORE INTO genres (genre_name) VALUES ('Romance');
+INSERT IGNORE INTO genres (genre_name) VALUES ('Adventure');
+-- INSERT IGNORE INTO genres (genre_name) VALUES ('Genre Name'); -- Add if needed
 
 -- Step 4: Add the book (WITHOUT author_id)
 INSERT INTO books (isbn, title, book_type, publisher_id, publication_year, series_id, series_number)
 VALUES (
-    '9780990595304',
-    'Moroni & the Battle for Manti',
+    '9781598117752',
+    'Mark of Royalty',
     'paperback',
-    (SELECT publisher_id FROM publishers WHERE publisher_name = 'Ethos Productions'),
-    2016,
-    (SELECT series_id FROM series WHERE series_name = 'The War Chapters Series'),
-    1
+    (SELECT publisher_id FROM publishers WHERE publisher_name = 'Covenant Communications'),
+    2010,
+    NULL,  -- series_id: replace with (SELECT series_id FROM series WHERE series_name = 'Series Name') if needed
+    NULL   -- series_number: replace with a number if needed
 );
 
--- Step 5: Link the book to ALL its authors (add as many as needed)
+-- Step 5: Link the book to ALL its authors (add as many rows as needed)
 INSERT INTO book_authors (book_isbn, author_id, author_order)
 VALUES 
-    ('9780990595304', (SELECT author_id FROM authors WHERE author_name = 'Jason Mow'), 1);
-    -- Add more authors if needed:
-    -- ('9780990595304', (SELECT author_id FROM authors WHERE author_name = 'Second Author Name'), 2),
-    -- ('9780990595304', (SELECT author_id FROM authors WHERE author_name = 'Third Author Name'), 3);
+    ('9781598117752', (SELECT author_id FROM authors WHERE author_name = 'Jennifer K. Clark'), 1),
+    ('9781598117752', (SELECT author_id FROM authors WHERE author_name = 'Stephonie K. Williams'), 2);
+    -- Add more rows here if there's a third author, e.g.:
+    -- ('9781598117752', (SELECT author_id FROM authors WHERE author_name = 'Third Author Name'), 3);
 
 -- Step 6: Link the book to all genres
 INSERT INTO book_genres (book_isbn, genre_id)
 VALUES 
-    ('9780990595304', (SELECT genre_id FROM genres WHERE genre_name = 'Historical Fiction')),
-    ('9780990595304', (SELECT genre_id FROM genres WHERE genre_name = 'Religious Fiction’));
+    ('9781598117752', (SELECT genre_id FROM genres WHERE genre_name = 'Historical Fiction')),
+    ('9781598117752', (SELECT genre_id FROM genres WHERE genre_name = 'Religious Fiction')),
+    ('9781598117752', (SELECT genre_id FROM genres WHERE genre_name = 'Romance')),
+    ('9781598117752', (SELECT genre_id FROM genres WHERE genre_name = 'Adventure'));
 
 — realized I made a mistake and didn’t change the author on a book.  The joys of copying and pasting code.
 
@@ -441,3 +458,153 @@ LEFT JOIN reading_log rl ON b.isbn = rl.book_isbn
 GROUP BY b.isbn, b.title, b.book_type, p.publisher_name, 
          b.publication_year, s.series_name, b.series_number
 ORDER BY b.title;
+
+— Realized I should probably add how many books are in a series.
+
+ALTER TABLE series
+  ADD COLUMN total_books INT DEFAULT NULL;
+
+—  Added bookshelf and shelf placement number to make it easier to find.
+
+ALTER TABLE books 
+  ADD COLUMN bookshelf_number INT DEFAULT NULL,
+  ADD COLUMN shelf_number INT DEFAULT NULL;
+
+— Sometimes I lend out books I want to to to whom I lent them and when.
+
+CREATE TABLE loans (
+  loan_id INT NOT NULL AUTO_INCREMENT,
+  book_isbn VARCHAR(13) NOT NULL,
+  borrower_name VARCHAR(255) NOT NULL,
+  date_lent DATE NOT NULL,
+  date_returned DATE DEFAULT NULL,
+  PRIMARY KEY (loan_id),
+  KEY book_isbn (book_isbn),
+  CONSTRAINT loans_ibfk_1 FOREIGN KEY (book_isbn) REFERENCES books(isbn) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+
+
+— New insert after adding the new additions including the loan and return information 
+
+-- Step 1: Add ALL authors for this book
+INSERT IGNORE INTO authors (author_name) VALUES ('Clair M. Poulson');
+-- INSERT IGNORE INTO authors (author_name) VALUES ('Second Author Name');  -- Add if there's a co-author
+-- INSERT IGNORE INTO authors (author_name) VALUES ('Third Author Name');   -- Add if needed
+
+-- Step 2: Add publisher and series
+INSERT IGNORE INTO publishers (publisher_name) VALUES ('Covenant Communications');
+-- INSERT IGNORE INTO series (series_name, total_books) VALUES ('Series name', 4); -- Add if needed
+-- If the series already exists but you now know the total book count, update it instead:
+-- UPDATE series SET total_books = 4 WHERE series_name = 'Series Name';
+
+-- Step 3: Add all genres
+INSERT IGNORE INTO genres (genre_name) VALUES ('Romance');
+INSERT IGNORE INTO genres (genre_name) VALUES ('Suspense');
+-- INSERT IGNORE INTO genres (genre_name) VALUES ('Genre Name');
+-- INSERT IGNORE INTO genres (genre_name) VALUES ('Genre Name');
+-- INSERT IGNORE INTO genres (genre_name) VALUES ('Genre Name'); -- Add if needed
+
+-- Step 4: Add the book (WITHOUT author_id)
+INSERT INTO books (isbn, title, book_type, publisher_id, publication_year, series_id, series_number, bookshelf_number, shelf_number)
+VALUES (
+    '9781524401788',
+    'Deadly Inheritance',
+    'paperback',
+    (SELECT publisher_id FROM publishers WHERE publisher_name = 'Covenant Communications'),
+    2017,
+    NULL,  -- series_id: replace with (SELECT series_id FROM series WHERE series_name = 'Series Name') if needed
+    NULL,  -- series_number: replace with a number if needed
+    8,     -- bookshelf_number
+    2      -- shelf_number
+);
+
+-- Step 5: Link the book to ALL its authors (add as many rows as needed)
+INSERT INTO book_authors (book_isbn, author_id, author_order)
+VALUES
+    ('9781524401788', (SELECT author_id FROM authors WHERE author_name = 'Clair M. Poulson'), 1);
+    -- ('ISBN', (SELECT author_id FROM authors WHERE author_name = 'Second Author Name'), 2);
+    -- Add more rows here if there's a third author, e.g.:
+    -- ('ISBN', (SELECT author_id FROM authors WHERE author_name = 'Third Author Name'), 3);
+
+-- Step 6: Link the book to all genres
+INSERT INTO book_genres (book_isbn, genre_id)
+VALUES
+    ('9781524401788', (SELECT genre_id FROM genres WHERE genre_name = 'Romance')),
+    ('9781524401788', (SELECT genre_id FROM genres WHERE genre_name = 'Suspense'));
+    -- ('ISBN', (SELECT genre_id FROM genres WHERE genre_name = 'Genre Name')),
+    -- ('ISBN', (SELECT genre_id FROM genres WHERE genre_name = 'Genre Name'));
+
+-- Step 7 (optional): Record a loan if you're lending this book out right away
+-- INSERT INTO loans (book_isbn, borrower_name, date_lent)
+-- VALUES ('ISBN', 'Borrower Name', CURDATE());
+
+-- To mark a loan as returned later:
+-- UPDATE loans SET date_returned = CURDATE()
+-- WHERE book_isbn = 'ISBN' AND date_returned IS NULL;
+
+— update the books I already entered into my database. For books that are in an ever expanding series just use the UPDATE series part to update the total number of books.  Starlight Archive is going to get a few updates as we go along
+
+-- Step 1: Set the total book count for the Shadowmarch series
+-- (this one update applies to all 4 books, since series_number already tracks each book's position)
+UPDATE series
+SET total_books = 4
+WHERE series_name = 'Shadowmarch';
+
+-- Step 2: Update bookshelf/shelf number for each Shadowmarch book
+-- Replace the bookshelf_number / shelf_number values below with your actual locations
+
+UPDATE books
+SET bookshelf_number = 8,   -- replace with actual bookshelf #
+    shelf_number = 1        -- replace with actual shelf #
+WHERE isbn = '9780756402709';  -- Shadowmarch (book 1)
+
+UPDATE books
+SET bookshelf_number = 8,   -- replace with actual bookshelf #
+    shelf_number = 1        -- replace with actual shelf #
+WHERE isbn = '9780756404710';  -- Shadowplay (book 2)
+
+UPDATE books
+SET bookshelf_number = 8,   -- replace with actual bookshelf #
+    shelf_number = 1        -- replace with actual shelf #
+WHERE isbn = '9780756406417';  -- Shadowrise (book 3)
+
+UPDATE books
+SET bookshelf_number = 8,   -- replace with actual bookshelf #
+    shelf_number = 1        -- replace with actual shelf #
+WHERE isbn = '9780756406950';  -- Shadowheart (book 4)
+
+— Some books I forgot to add what book number they were in the series
+
+-- Step 1: Set total books for The Giver series
+UPDATE series
+SET total_books = 4   -- The Giver, Gathering Blue, Messenger, Son
+WHERE series_name = 'The Giver';
+
+-- Step 2: Confirm/set series_number and add shelf location for The Giver itself
+UPDATE books
+SET series_number = 1,       -- already 1 in your data, included here for completeness
+    bookshelf_number = 8,    -- replace with actual bookshelf #
+    shelf_number = 1         -- replace with actual shelf #
+WHERE isbn = '9780544340688';  -- The Giver
+
+— Query that orders the books into their series name, order in the book series, gives me the book name, and bookshelf location
+
+SELECT
+    s.series_name,
+    b.series_number,
+    s.total_books,
+    CASE 
+        WHEN s.series_name IS NOT NULL AND s.series_name != '' 
+        THEN CONCAT(b.series_number, ' of ', s.total_books)
+        ELSE NULL
+    END AS series_position,
+    b.title,
+    b.bookshelf_number,
+    b.shelf_number
+FROM books b
+LEFT JOIN series s ON b.series_id = s.series_id
+ORDER BY
+    s.series_name IS NULL,   -- push standalone (no series) books to the end
+    s.series_name ASC,
+    b.series_number ASC;
